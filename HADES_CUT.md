@@ -82,11 +82,28 @@ The server exposes:
 - `hades_targets`
 - `hades_record_start`
 - `hades_record_stop`
+- `hades_record_status`
 - `hades_project_get`
+- `hades_project_validate`
 - `hades_project_patch`
+- `hades_editor_open`
 - `hades_export`
 
 Local MCP never needs a Cap account token. Network library, upload, comment, and organization operations stay on the separate authenticated `cap mcp serve` boundary.
+
+## ChatGPT Work connection
+
+The repository contains a distributable ChatGPT/Codex plugin at `plugins/hades-cut`. Import that directory from the GitHub repository into a workspace, or install it locally while developing. Its skill teaches ChatGPT Work the capture, privacy, recovery, edit, and verification protocol; its MCP declaration starts `cap mcp local` on the Mac where Hades Cut is installed.
+
+The `cap` executable must be on `PATH`. A source build can be exposed temporarily with:
+
+```sh
+export PATH="$(pwd)/target/debug:$PATH"
+```
+
+Then ask ChatGPT Work to use the Hades Cut plugin to record a product feature. The agent uses its computer-use capability to operate the product and the Hades tools to control capture and editing. A workspace administrator can constrain or disable write actions through workspace plugin controls.
+
+This local stdio connection is intentionally desktop-only. A cloud ChatGPT session cannot reach a private Mac process directly; supporting unattended cloud jobs requires a separately authenticated HTTPS MCP bridge, explicit machine enrollment, and per-job consent. That bridge is not included yet, so this version is designed for ChatGPT Work or Codex running with local desktop tool access.
 
 ## Agent editing protocol
 

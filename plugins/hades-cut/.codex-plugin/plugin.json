@@ -1,0 +1,30 @@
+{
+  "name": "hades-cut",
+  "version": "0.1.0",
+  "description": "Record product features on a Mac, edit them safely, and export verified videos through Hades Cut.",
+  "author": {
+    "name": "mosnin",
+    "url": "https://github.com/mosnin"
+  },
+  "homepage": "https://github.com/mosnin/Hades-Cut/blob/main/HADES_CUT.md",
+  "repository": "https://github.com/mosnin/Hades-Cut",
+  "license": "AGPL-3.0-or-later",
+  "keywords": ["screen-recording", "video-editing", "macos", "agents", "mcp"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Hades Cut",
+    "shortDescription": "Agent-operated product feature videos",
+    "longDescription": "Control local macOS screen recording and revision-safe video edits from ChatGPT Work or Codex, with deterministic MCP tools and recoverable project history.",
+    "developerName": "mosnin",
+    "category": "Creative",
+    "capabilities": ["Interactive", "Write"],
+    "websiteURL": "https://github.com/mosnin/Hades-Cut",
+    "defaultPrompt": [
+      "Record this product feature and make a polished demo.",
+      "Edit my latest recording into a concise walkthrough.",
+      "Export and verify this Hades Cut project."
+    ],
+    "brandColor": "#7C3AED"
+  },
+  "mcpServers": "./.mcp.json"
+}

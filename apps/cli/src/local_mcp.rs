@@ -34,6 +34,9 @@ struct TargetsInput {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct EmptyInput {}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 struct RecordStartInput {
     #[serde(default)]
@@ -162,6 +165,20 @@ impl HadesLocalMcpServer {
     }
 
     #[tool(
+        name = "hades_record_status",
+        description = "List active and recently finalized local recording sessions so an interrupted agent can recover",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn record_status(&self, Parameters(_input): Parameters<EmptyInput>) -> CallToolResult {
+        Self::result(Self::run_cli(vec!["record".to_string(), "status".to_string()]).await)
+    }
+
+    #[tool(
         name = "hades_record_start",
         description = "Start a detached local Studio recording and return its recording ID and .cap project path",
         annotations(
@@ -272,6 +289,30 @@ impl HadesLocalMcpServer {
     }
 
     #[tool(
+        name = "hades_project_validate",
+        description = "Verify that a local .cap project is finalized and all required media files exist before editing or export",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn project_validate(
+        &self,
+        Parameters(input): Parameters<ProjectInput>,
+    ) -> CallToolResult {
+        Self::result(
+            Self::run_cli(vec![
+                "project".to_string(),
+                "validate".to_string(),
+                input.project_path,
+            ])
+            .await,
+        )
+    }
+
+    #[tool(
         name = "hades_project_patch",
         description = "Apply an RFC 7396 merge patch to a local .cap edit, with dry-run validation, revision checking, and automatic reversible history",
         annotations(
@@ -287,6 +328,47 @@ impl HadesLocalMcpServer {
             input.patch,
             input.expected_revision.as_deref(),
             input.dry_run,
+        ))
+    }
+
+    #[tool(
+        name = "hades_editor_open",
+        description = "Open a local .cap project in the Hades Cut Mac app for human or computer-use review",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn editor_open(&self, Parameters(input): Parameters<ProjectInput>) -> CallToolResult {
+        let project_path = PathBuf::from(&input.project_path);
+        if !project_path.is_dir() || !project_path.join("recording-meta.json").is_file() {
+            return Self::result::<Value>(Err(format!(
+                "Not an editable .cap project: {}",
+                project_path.display()
+            )));
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let output = tokio::process::Command::new("open")
+                .args(["-b", "app.hades.cut"])
+                .arg(&project_path)
+                .output()
+                .await;
+            return Self::result(match output {
+                Ok(output) if output.status.success() => Ok(json!({
+                    "opened": true,
+                    "projectPath": project_path,
+                    "bundleIdentifier": "app.hades.cut",
+                })),
+                Ok(output) => Err(String::from_utf8_lossy(&output.stderr).trim().to_string()),
+                Err(error) => Err(format!("Failed to open Hades Cut: {error}")),
+            });
+        }
+        #[cfg(not(target_os = "macos"))]
+        Self::result::<Value>(Err(
+            "Opening the Hades Cut desktop editor is supported only on macOS".to_string(),
         ))
     }
 }

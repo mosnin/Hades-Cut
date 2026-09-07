@@ -1,0 +1,11 @@
+interface:
+  display_name: "Hades Cut"
+  short_description: "Record and edit product feature videos"
+  brand_color: "#7C3AED"
+  default_prompt: "Use $hades-cut to record a product feature, edit it, and export a verified video."
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "hades-cut"
+      description: "Local Hades Cut recording, project editing, and export tools"
+      transport: "stdio"

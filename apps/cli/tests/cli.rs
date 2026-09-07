@@ -520,6 +520,68 @@ fn project_config_get_without_file_returns_default() {
 }
 
 #[test]
+fn project_config_patch_is_revision_safe_and_recoverable() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("recording.cap");
+    write_single_segment_meta(&project);
+
+    let dry_run = run(&[
+        "project",
+        "config",
+        "patch",
+        project.to_str().unwrap(),
+        "--patch-json",
+        r#"{"cursor":{"size":140}}"#,
+        "--dry-run",
+        "--format",
+        "json",
+    ]);
+    assert!(dry_run.status.success(), "stderr: {}", stderr(&dry_run));
+    let preview = parse_json(&dry_run);
+    let revision = preview["previousRevision"].as_str().unwrap();
+    assert_eq!(preview["dryRun"], true);
+    assert_eq!(preview["changedPaths"], serde_json::json!(["/cursor/size"]));
+    assert!(!project.join("project-config.json").exists());
+
+    let applied = run(&[
+        "project",
+        "config",
+        "patch",
+        project.to_str().unwrap(),
+        "--patch-json",
+        r#"{"cursor":{"size":140}}"#,
+        "--expected-revision",
+        revision,
+        "--format",
+        "json",
+    ]);
+    assert!(applied.status.success(), "stderr: {}", stderr(&applied));
+    let result = parse_json(&applied);
+    assert_ne!(result["revision"], result["previousRevision"]);
+    assert!(Path::new(result["historyPath"].as_str().unwrap()).is_file());
+
+    let stale = run(&[
+        "project",
+        "config",
+        "patch",
+        project.to_str().unwrap(),
+        "--patch-json",
+        r#"{"cursor":{"size":160}}"#,
+        "--expected-revision",
+        revision,
+        "--format",
+        "json",
+    ]);
+    assert!(!stale.status.success());
+    assert!(
+        parse_json(&stale)["error"]
+            .as_str()
+            .unwrap()
+            .contains("Project config changed")
+    );
+}
+
+#[test]
 fn export_missing_project_emits_json_error_event() {
     let output = run(&["export", "/this/path/does/not/exist.cap", "--progress-json"]);
     assert!(!output.status.success());
@@ -942,6 +1004,80 @@ fn mcp_stdout_is_protocol_only_and_exposes_expected_tools() {
     assert!(!serialized.contains("access_key_id"));
     assert!(!serialized.contains("secret_access_key"));
     assert!(!serialized.contains("image_data"));
+}
+
+#[test]
+fn local_mcp_starts_without_credentials_and_exposes_hades_tools() {
+    let mut command = cap();
+    command
+        .args(["mcp", "local"])
+        .env_remove("CAP_AGENT_TOKEN")
+        .env_remove("CAP_API_KEY")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command.spawn().expect("failed to start local MCP server");
+    let stdout = child.stdout.take().unwrap();
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        for line in BufReader::new(stdout).lines() {
+            if sender.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    let mut stdin = child.stdin.take().unwrap();
+    for message in [
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-03-26",
+                "capabilities": {},
+                "clientInfo": { "name": "hades-test", "version": "1" }
+            }
+        }),
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized",
+            "params": {}
+        }),
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/list",
+            "params": {}
+        }),
+    ] {
+        writeln!(stdin, "{message}").unwrap();
+    }
+    stdin.flush().unwrap();
+    let initialize = receiver.recv_timeout(Duration::from_secs(10));
+    let tools = receiver.recv_timeout(Duration::from_secs(10));
+    let _ = child.kill();
+    let _ = child.wait();
+
+    let initialize: Value = serde_json::from_str(&initialize.unwrap().unwrap()).unwrap();
+    assert_eq!(
+        initialize["result"]["serverInfo"]["name"],
+        "hades-cut-local"
+    );
+    let tools: Value = serde_json::from_str(&tools.unwrap().unwrap()).unwrap();
+    let serialized = serde_json::to_string(&tools["result"]["tools"]).unwrap();
+    for name in [
+        "hades_targets",
+        "hades_record_status",
+        "hades_record_start",
+        "hades_record_stop",
+        "hades_project_get",
+        "hades_project_validate",
+        "hades_project_patch",
+        "hades_editor_open",
+        "hades_export",
+    ] {
+        assert!(serialized.contains(name), "missing local MCP tool {name}");
+    }
 }
 
 #[test]
