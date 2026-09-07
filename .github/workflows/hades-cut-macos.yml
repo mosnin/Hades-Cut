@@ -1,0 +1,66 @@
+name: Hades Cut macOS Acceptance Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/hades-cut-macos.yml"
+      - "apps/cli/**"
+      - "apps/desktop/**"
+      - "apps/desktop-gpui/**"
+      - "crates/**"
+      - "scripts/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "package.json"
+      - "pnpm-lock.yaml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-latest
+    env:
+      RUST_TARGET_TRIPLE: aarch64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.88.0
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: ./.github/actions/setup-rust-cache
+        with:
+          target: aarch64-apple-darwin
+
+      - uses: ./.github/actions/setup-js
+
+      - name: Configure unsigned acceptance build
+        run: |
+          echo "VITE_ENVIRONMENT=development" >> .env
+          echo "VITE_SERVER_URL=https://cap.so" >> .env
+          cp .env apps/desktop/.env
+
+      - name: Prepare native dependencies
+        run: pnpm -w cap-setup
+
+      - name: Build Hades Cut application
+        run: pnpm tauri:build:hades --target aarch64-apple-darwin
+
+      - name: Run Hades CLI integration tests
+        run: |
+          cargo test --locked -p cap --test cli project_config_patch_is_revision_safe_and_recoverable
+          cargo test --locked -p cap --test cli local_mcp_starts_without_credentials_and_exposes_hades_tools
+
+      - name: Package application
+        run: ditto -c -k --sequesterRsrc --keepParent "target/aarch64-apple-darwin/release/bundle/macos/Hades Cut.app" hades-cut-macos-arm64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hades-cut-macos-arm64
+          path: hades-cut-macos-arm64.zip
+          if-no-files-found: error
+          retention-days: 7
