@@ -5,6 +5,8 @@ use cap_project::{
     StudioRecordingStatus,
 };
 use serde::Serialize;
+use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 use crate::{OutputFormat, write_json};
 
@@ -47,6 +49,194 @@ pub fn config_set(
         crate::write_json(&serde_json::json!({ "ok": true }))?;
     }
     Ok(())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigPatchResult {
+    pub project_path: PathBuf,
+    pub previous_revision: String,
+    pub revision: String,
+    pub changed_paths: Vec<String>,
+    pub dry_run: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub history_path: Option<PathBuf>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigSnapshot {
+    pub project_path: PathBuf,
+    pub revision: String,
+    pub config: cap_project::ProjectConfiguration,
+}
+
+fn load_effective_config(project_path: &Path) -> Result<cap_project::ProjectConfiguration, String> {
+    if !project_path.is_dir() || !project_path.join("recording-meta.json").is_file() {
+        return Err(format!(
+            "Not an editable .cap project: {}",
+            project_path.display()
+        ));
+    }
+    match cap_project::ProjectConfiguration::load(project_path) {
+        Ok(config) => Ok(config),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            serde_json::from_str("{}").map_err(|error| error.to_string())
+        }
+        Err(error) => Err(format!("Failed to load project config: {error}")),
+    }
+}
+
+fn revision(value: &Value) -> Result<String, String> {
+    let bytes = serde_json::to_vec(value).map_err(|error| error.to_string())?;
+    let digest = Sha256::digest(bytes);
+    Ok(digest.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+pub fn config_snapshot(project_path: PathBuf) -> Result<ConfigSnapshot, String> {
+    let config = load_effective_config(&project_path)?;
+    let value = serde_json::to_value(&config).map_err(|error| error.to_string())?;
+    Ok(ConfigSnapshot {
+        project_path,
+        revision: revision(&value)?,
+        config,
+    })
+}
+
+fn merge_patch(target: &mut Value, patch: Value) {
+    let Value::Object(patch_object) = patch else {
+        *target = patch;
+        return;
+    };
+    if !target.is_object() {
+        *target = Value::Object(Default::default());
+    }
+    let target_object = target.as_object_mut().expect("target was set to an object");
+    for (key, value) in patch_object {
+        if value.is_null() {
+            target_object.remove(&key);
+        } else {
+            merge_patch(target_object.entry(key).or_insert(Value::Null), value);
+        }
+    }
+}
+
+fn changed_paths(before: &Value, after: &Value, path: &str, output: &mut Vec<String>) {
+    if before == after {
+        return;
+    }
+    match (before, after) {
+        (Value::Object(before), Value::Object(after)) => {
+            let mut keys = before.keys().chain(after.keys()).collect::<Vec<_>>();
+            keys.sort_unstable();
+            keys.dedup();
+            for key in keys {
+                let child_path = format!("{path}/{}", key.replace('~', "~0").replace('/', "~1"));
+                match (before.get(key), after.get(key)) {
+                    (Some(before), Some(after)) => {
+                        changed_paths(before, after, &child_path, output);
+                    }
+                    _ => output.push(child_path),
+                }
+            }
+        }
+        _ => output.push(if path.is_empty() {
+            "/".to_string()
+        } else {
+            path.to_string()
+        }),
+    }
+}
+
+fn read_patch(patch_json: Option<String>, patch_file: Option<PathBuf>) -> Result<Value, String> {
+    let input = match (patch_json, patch_file) {
+        (Some(input), None) => input,
+        (None, Some(path)) => std::fs::read_to_string(&path)
+            .map_err(|error| format!("Failed to read patch {}: {error}", path.display()))?,
+        _ => return Err("Provide exactly one of --patch-json or --patch-file".to_string()),
+    };
+    serde_json::from_str(&input).map_err(|error| format!("Invalid JSON Merge Patch: {error}"))
+}
+
+pub fn apply_config_patch(
+    project_path: PathBuf,
+    patch: Value,
+    expected_revision: Option<&str>,
+    dry_run: bool,
+) -> Result<ConfigPatchResult, String> {
+    let current = load_effective_config(&project_path)?;
+    let before = serde_json::to_value(&current).map_err(|error| error.to_string())?;
+    let previous_revision = revision(&before)?;
+    if let Some(expected) = expected_revision
+        && expected != previous_revision
+    {
+        return Err(format!(
+            "Project config changed: expected revision {expected}, found {previous_revision}"
+        ));
+    }
+
+    let mut after = before.clone();
+    merge_patch(&mut after, patch);
+    let updated: cap_project::ProjectConfiguration = serde_json::from_value(after.clone())
+        .map_err(|error| format!("Patched project config is invalid: {error}"))?;
+    updated
+        .validate()
+        .map_err(|error| format!("Patched project config failed validation: {error}"))?;
+
+    let mut paths = Vec::new();
+    changed_paths(&before, &after, "", &mut paths);
+    let next_revision = revision(&after)?;
+    let history_path = if dry_run || paths.is_empty() {
+        None
+    } else {
+        let history_dir = project_path.join(".hades").join("history");
+        std::fs::create_dir_all(&history_dir)
+            .map_err(|error| format!("Failed to create edit history: {error}"))?;
+        let history_path = history_dir.join(format!("{previous_revision}.json"));
+        if !history_path.exists() {
+            std::fs::write(
+                &history_path,
+                serde_json::to_string_pretty(&current).map_err(|error| error.to_string())?,
+            )
+            .map_err(|error| format!("Failed to save edit history: {error}"))?;
+        }
+        updated
+            .write(&project_path)
+            .map_err(|error| format!("Failed to write project config: {error}"))?;
+        Some(history_path)
+    };
+
+    Ok(ConfigPatchResult {
+        project_path,
+        previous_revision,
+        revision: next_revision,
+        changed_paths: paths,
+        dry_run,
+        history_path,
+    })
+}
+
+pub fn config_patch(
+    project_path: PathBuf,
+    patch_json: Option<String>,
+    patch_file: Option<PathBuf>,
+    expected_revision: Option<&str>,
+    dry_run: bool,
+    format: OutputFormat,
+) -> Result<(), String> {
+    let patch = read_patch(patch_json, patch_file)?;
+    let result = apply_config_patch(project_path, patch, expected_revision, dry_run)?;
+    match format {
+        OutputFormat::Json => write_json(&result),
+        OutputFormat::Text => {
+            println!("revision: {}", result.revision);
+            println!("changed: {}", result.changed_paths.join(", "));
+            if let Some(path) = result.history_path {
+                println!("history: {}", path.display());
+            }
+            Ok(())
+        }
+    }
 }
 
 pub fn inspect(project_path: PathBuf, format: OutputFormat) -> Result<(), String> {
@@ -322,5 +512,43 @@ pub fn validate(project_path: PathBuf, format: OutputFormat) -> Result<(), Strin
         Ok(())
     } else {
         Err("project validation failed".to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{changed_paths, merge_patch};
+
+    #[test]
+    fn merge_patch_updates_nested_values_and_removes_nulls() {
+        let mut target = json!({
+            "background": { "blur": 2, "color": "red" },
+            "timeline": [1, 2],
+        });
+        merge_patch(
+            &mut target,
+            json!({
+                "background": { "blur": 8, "color": null },
+                "timeline": [3],
+            }),
+        );
+        assert_eq!(
+            target,
+            json!({
+                "background": { "blur": 8 },
+                "timeline": [3],
+            })
+        );
+    }
+
+    #[test]
+    fn changed_paths_reports_json_pointers() {
+        let before = json!({ "camera": { "x/y": 1 }, "cursor": true });
+        let after = json!({ "camera": { "x/y": 2 }, "cursor": true, "zoom": 3 });
+        let mut paths = Vec::new();
+        changed_paths(&before, &after, "", &mut paths);
+        assert_eq!(paths, vec!["/camera/x~1y", "/zoom"]);
     }
 }

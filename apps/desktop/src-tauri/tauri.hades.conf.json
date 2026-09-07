@@ -1,0 +1,11 @@
+{
+	"$schema": "https://schema.tauri.app/config/2",
+	"productName": "Hades Cut",
+	"mainBinaryName": "Hades Cut",
+	"identifier": "app.hades.cut",
+	"plugins": {
+		"updater": {
+			"active": false
+		}
+	}
+}

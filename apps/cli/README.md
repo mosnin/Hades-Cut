@@ -82,6 +82,8 @@ step.
 - `cap screenshot` — capture a still of a screen/window (`--json` → `{path,width,height}`).
 - `cap targets` (`screens`/`windows`/`cameras`/`mics`) — enumerate capture inputs.
 - `cap project inspect` / `validate` / `config get|set` — inspect and edit `.cap` projects.
+- `cap project config patch` — revision-safe partial edits with dry runs and automatic `.hades/history` recovery snapshots.
+- `cap mcp local` — credential-free local MCP tools for capture, editing, and export.
 - `cap recordings list` — list `.cap` recordings in the desktop library.
 - `cap upload` — upload a `.cap` project or video file and get a shareable link.
 - `cap update` — download and install the latest Cap Desktop bundle, then repair the `cap` shim.

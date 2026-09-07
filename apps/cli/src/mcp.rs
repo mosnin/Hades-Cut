@@ -26,6 +26,7 @@ pub struct McpArgs {
 #[derive(Subcommand)]
 enum McpCommands {
     Serve,
+    Local,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -3564,6 +3565,7 @@ impl McpArgs {
                 service.waiting().await.map_err(|error| error.to_string())?;
                 Ok(())
             }
+            McpCommands::Local => crate::local_mcp::serve().await,
         }
     }
 }

@@ -14,6 +14,7 @@ mod export;
 mod guide;
 mod jobs;
 mod library;
+mod local_mcp;
 mod mcp;
 mod notifications;
 mod organizations;
@@ -363,6 +364,10 @@ enum ProjectConfigCommands {
     Get(ProjectTarget),
     /// Replace the project's editor configuration from a full JSON document
     Set(ProjectConfigSet),
+    #[command(
+        about = "Apply a partial JSON Merge Patch with revision checking and automatic history"
+    )]
+    Patch(ProjectConfigPatch),
 }
 
 #[derive(Args)]
@@ -371,6 +376,34 @@ struct ProjectConfigSet {
     /// Full ProjectConfiguration as a JSON string (camelCase keys); omitted fields reset to defaults
     #[arg(long)]
     settings_json: String,
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    format: OutputFormat,
+}
+
+#[derive(Args)]
+struct ProjectConfigPatch {
+    project_path: PathBuf,
+    #[arg(
+        long,
+        help = "RFC 7396 JSON Merge Patch document",
+        conflicts_with = "patch_file",
+        required_unless_present = "patch_file"
+    )]
+    patch_json: Option<String>,
+    #[arg(
+        long,
+        help = "Read the RFC 7396 JSON Merge Patch document from a file",
+        conflicts_with = "patch_json",
+        required_unless_present = "patch_json"
+    )]
+    patch_file: Option<PathBuf>,
+    #[arg(
+        long,
+        help = "Refuse to edit unless the current configuration has this revision"
+    )]
+    expected_revision: Option<String>,
+    #[arg(long, help = "Validate and report the edit without writing it")]
+    dry_run: bool,
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     format: OutputFormat,
 }
@@ -731,6 +764,20 @@ impl ProjectArgs {
                     finish_json(
                         format,
                         project::config_set(args.project_path, &args.settings_json, format),
+                    )
+                }
+                ProjectConfigCommands::Patch(args) => {
+                    let format = resolve_format(json, args.format);
+                    finish_json(
+                        format,
+                        project::config_patch(
+                            args.project_path,
+                            args.patch_json,
+                            args.patch_file,
+                            args.expected_revision.as_deref(),
+                            args.dry_run,
+                            format,
+                        ),
                     )
                 }
             },

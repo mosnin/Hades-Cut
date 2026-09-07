@@ -29,6 +29,7 @@
 		"format": "pnpm exec biome check --write",
 		"lint": "pnpm exec biome lint",
 		"tauri:build": "dotenv -e .env -- pnpm --dir apps/desktop run build:tauri --config src-tauri/tauri.prod.conf.json --verbose",
+		"tauri:build:hades": "dotenv -e .env -- pnpm --dir apps/desktop run build:tauri --config src-tauri/tauri.prod.conf.json --config src-tauri/tauri.hades.conf.json --verbose",
 		"typecheck": "pnpm --dir apps/web exec next typegen && pnpm tsc -b",
 		"test": "turbo run test",
 		"test:web": "pnpm --filter=@cap/web test",

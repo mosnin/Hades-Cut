@@ -2,7 +2,7 @@ use serde::Serialize;
 
 use crate::{OutputFormat, write_json};
 
-const GUIDE_SCHEMA_VERSION: u32 = 3;
+const GUIDE_SCHEMA_VERSION: u32 = 4;
 
 /// Machine-readable capability + schema manifest. `cap guide --json` is the single document an agent
 /// can fetch to learn the output convention, env vars, exit codes, and the per-command output shape
@@ -207,6 +207,18 @@ fn build() -> Guide {
                 "screenshot",
                 "Capture a still of a screen/window. JSON emits {path,width,height}.",
                 OutputMode::SingleJson,
+                &[],
+            ),
+            cmd(
+                "project config patch",
+                "Apply an RFC 7396 merge patch to an edit with optimistic revision checking, dry-run validation, changed-path evidence, and automatic history.",
+                OutputMode::SingleJson,
+                &[],
+            ),
+            cmd(
+                "mcp local",
+                "Run the credential-free Hades Cut MCP server for local targets, recording, project edits, and export.",
+                OutputMode::TextOnly,
                 &[],
             ),
             cmd(
